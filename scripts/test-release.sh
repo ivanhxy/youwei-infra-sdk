@@ -25,7 +25,9 @@ export PATH="$test_dir/bin:$PATH"
 
 new_fixture() {
   git init -q --bare "$test_dir/$1-remote"
-  git init -q -b main "$test_dir/$1"
+  # git init -b needs Git 2.28; pin the branch before the first commit instead.
+  git init -q "$test_dir/$1"
+  git -C "$test_dir/$1" symbolic-ref HEAD refs/heads/main
   cd "$test_dir/$1"
   mkdir -p scripts
   cp "$script_dir/release.sh" scripts/
