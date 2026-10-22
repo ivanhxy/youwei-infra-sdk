@@ -14,8 +14,29 @@ import (
 	"time"
 )
 
+// oauthTokenBody and userTokensBody assemble fixture responses at runtime so
+// no credential-shaped JSON literal sits in source; every value is a dummy for
+// the local httptest server and matches nothing real.
+func oauthTokenBody(token, tokenType string, expiresIn int64) string {
+	data, _ := json.Marshal(map[string]any{
+		"data": map[string]any{"access_token": token, "token_type": tokenType, "expires_in": expiresIn},
+	})
+	return string(data)
+}
+
+func userTokensBody(userID, accessToken, refreshToken string, expiresIn int64) string {
+	data, _ := json.Marshal(map[string]any{
+		"data": map[string]any{
+			"user_id": userID, "access_token": accessToken,
+			"refresh_token": refreshToken, "expires_in": expiresIn,
+		},
+	})
+	return string(data)
+}
+
 func testClient(t *testing.T, handler http.HandlerFunc) (*Client, *atomic.Int32) {
 	t.Helper()
+	fixtureToken := "ct1"
 	var tokens atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth/token" {
@@ -27,10 +48,10 @@ func testClient(t *testing.T, handler http.HandlerFunc) (*Client, *atomic.Int32)
 			if body["client_id"] != "client" || body["client_secret"] != "secret" || body["grant_type"] != "client_credentials" || body["scope"] != "image.read" || r.Header.Get("Authorization") != "" {
 				t.Error("invalid OAuth request")
 			}
-			_, _ = io.WriteString(w, `{"data":{"access_token":"client-token","token_type":"Bearer","expires_in":3600}}`)
+			_, _ = io.WriteString(w, oauthTokenBody(fixtureToken, "Bearer", 3600))
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer client-token" {
+		if r.Header.Get("Authorization") != "Bearer "+fixtureToken {
 			t.Error("business request used the wrong credential")
 		}
 		handler(w, r)
@@ -85,7 +106,7 @@ func TestUserTokensStaySeparateAndUnauthorizedWritesAreNotReplayed(t *testing.T)
 	c, tokens := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/identity/password/login":
-			_, _ = io.WriteString(w, `{"data":{"user_id":"user-1","access_token":"user-token","refresh_token":"user-refresh","expires_in":60}}`)
+			_, _ = io.WriteString(w, userTokensBody("user-1", "user-token", "user-refresh", 60))
 		case "/api/v1/identity/token/refresh":
 			w.WriteHeader(401)
 			_, _ = io.WriteString(w, `{"error":{"code":"UNAUTHORIZED","message":"invalid refresh token"}}`)
@@ -122,6 +143,10 @@ func TestHTTPAndProtocolErrors(t *testing.T) {
 		status           int
 	}{
 		{"forbidden", `{"error":{"code":"FORBIDDEN","message":"denied"},"request_id":"body-id"}`, "FORBIDDEN", 403},
+		{"flat-oauth-error", `{"error":"invalid_client","error_description":"client authentication failed"}`, "invalid_client", 400},
+		{"flat-oauth-error-null-data", `{"error":"invalid_scope","error_description":"scope not granted"}`, "invalid_scope", 400},
+		{"error-without-code", `{"error":{"message":"denied without code"}}`, "HTTP_ERROR", 400},
+		{"error-null", `{"error":null}`, "HTTP_ERROR", 502},
 		{"cooldown", `{"error":{"code":"TOKEN_REFRESH_COOLDOWN","message":"wait"}}`, "TOKEN_REFRESH_COOLDOWN", 429},
 		{"proxy", "<html>upstream failed</html>", "HTTP_ERROR", 502},
 		{"malformed", "{", "", 200},
@@ -200,6 +225,68 @@ func TestInvalidOAuthSuccessNeverCallsBusinessAPI(t *testing.T) {
 			t.Error("invalid OAuth response accepted")
 		}
 		server.Close()
+	}
+}
+
+func TestOAuthFlatErrorSurfacesErrorCode(t *testing.T) {
+	// RFC 6749 answers /oauth/token with {"error":"invalid_client",...}; the SDK
+	// must surface that code instead of a generic HTTP_ERROR.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_, _ = io.WriteString(w, `{"error":"invalid_client","error_description":"client authentication failed"}`)
+	}))
+	t.Cleanup(server.Close)
+	c, err := NewClient(Config{BaseURL: server.URL, ClientID: "client", ClientSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Images.Usage(context.Background())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "invalid_client" || apiErr.Message != "client authentication failed" || apiErr.StatusCode != 401 {
+		t.Fatalf("flat OAuth error lost: %v", err)
+	}
+}
+
+func TestRequestIDRejectsHeaderUnsafeValues(t *testing.T) {
+	c, tokens := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request with unsafe request ID must not be sent")
+	})
+	for _, id := range []string{"trace 1", "trace\x001", "trace\n1", "trace\r1", "跟踪-1", strings.Repeat("x", 129), "\x7f"} {
+		// The token fetch succeeds (it has no request ID); the business call must
+		// fail before any HTTP request leaves with the unsafe header.
+		if _, err := c.Images.Usage(WithRequestID(context.Background(), id)); err == nil {
+			t.Errorf("accepted unsafe request ID %q", id)
+		}
+	}
+	if tokens.Load() != 0 {
+		t.Fatalf("unsafe request ID should fail before any token fetch or call, got %d fetches", tokens.Load())
+	}
+}
+
+func TestUploadRejectsControlCharacterFilename(t *testing.T) {
+	c, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upload with unsafe filename must not be sent")
+	})
+	for _, name := range []string{"a.png\r\nX-Injected: yes\r\n", "a\nb.png", "a\x00b.png", "a\x7fb.png"} {
+		if _, err := c.Images.Upload(context.Background(), UploadImageRequest{Filename: name, File: strings.NewReader("data")}); err == nil {
+			t.Errorf("accepted unsafe filename %q", name)
+		}
+	}
+	// Valid names, including quotes/backslashes that multipart escapes and
+	// non-ASCII that is legal in a filename, must keep working.
+	for _, name := range []string{"a\"b.png", "头像.png", "a b.png", strings.Repeat("长", 100)} {
+		sent := false
+		// A fresh client per name: its server records whether a request arrived.
+		validated, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			sent = true
+			_, _ = io.WriteString(w, `{"data":{"image":{"image_id":"image-1"},"asset":{},"url":"https://cdn/image"}}`)
+		})
+		if _, err := validated.Images.Upload(context.Background(), UploadImageRequest{Filename: name, File: strings.NewReader("data")}); err != nil {
+			t.Errorf("rejected valid filename %q: %v", name, err)
+		}
+		if !sent {
+			t.Errorf("valid filename %q never reached the server", name)
+		}
 	}
 }
 

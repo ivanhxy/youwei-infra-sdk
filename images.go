@@ -171,6 +171,11 @@ func (s *ImageService) Upload(ctx context.Context, input UploadImageRequest) (*R
 	if input.File == nil || input.Filename == "" {
 		return nil, errors.New("infra: File and Filename are required")
 	}
+	// Filename travels inside a quoted Content-Disposition line; CR/LF would
+	// let a caller forge extra part headers (mime/multipart does not escape them).
+	if !filenameSafe(input.Filename) {
+		return nil, errors.New("infra: Filename must not contain control characters")
+	}
 	token, err := s.client.accessToken(ctx)
 	if err != nil {
 		return nil, err

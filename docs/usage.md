@@ -1,6 +1,6 @@
 # Go SDK 使用文档
 
-面向产品线 Go 后端开发者。SDK 统一处理鉴权、请求编码、响应解析和错误，覆盖身份、图片、短信、微信公众号 30 个业务接口。要求 Go 1.22+，只依赖标准库；产品项目无需引入中台后端或云厂商 SDK。
+面向产品线 Go 后端开发者。SDK 统一处理鉴权、请求编码、响应解析和错误，覆盖身份、图片、短信、微信公众号 30 个业务接口。要求 Go 1.26+，只依赖标准库；产品项目无需引入中台后端或云厂商 SDK。
 
 第一次接入按第 1 节跑通，再选择需要的模块。第 2～6 节的业务片段放在返回 `error` 的业务函数内，已持有 `client *infra.Client` 和请求的 `ctx context.Context`；`codeFromUser` 等变量来自本产品的请求参数。完整可运行程序见第 1 节。
 
@@ -38,7 +38,7 @@ Module 路径是 `github.com/ivanhxy/youwei-infra-sdk`，导入别名使用 `inf
 在产品项目根目录安装指定版本：
 
 ```bash
-go get github.com/ivanhxy/youwei-infra-sdk@v0.1.0
+go get github.com/ivanhxy/youwei-infra-sdk@v0.2.0
 ```
 
 已有 Go 项目继续使用自己的 `go.mod`；仅新建项目时先运行 `go mod init <你的产品模块路径>`。SDK 公开下载，无需中台仓库权限或私有 Git 凭据。
@@ -248,7 +248,7 @@ if err != nil {
 
 上传按流发送，SDK 不关闭调用方传入的文件。数据库保存图片 ID；私有 URL 有时效，按需调用 `CreateAccessURL`。
 
-`SceneCode`、`Filename`、`File` 是上传的核心输入；`OperatorID` 记录业务操作人，`BizRefType` / `BizRefID` 记录业务归属，这些字段不替代本产品的权限检查。`IdempotencyKey` 用于标识一次业务上传意图，重试同一意图复用原值，新的图片变更使用新值。上传策略、大小及格式限制由场景配置决定。
+`SceneCode`、`Filename`、`File` 是上传的核心输入；`Filename` 不能包含换行等控制字符，含非法字符会直接返回错误，来自终端用户的原始文件名应先在业务侧清洗。`OperatorID` 记录业务操作人，`BizRefType` / `BizRefID` 记录业务归属，这些字段不替代本产品的权限检查。`IdempotencyKey` 用于标识一次业务上传意图，重试同一意图复用原值，新的图片变更使用新值。上传策略、大小及格式限制由场景配置决定。
 
 `CreateAccessURL` 的有效期由服务端策略决定；方法不接受自定义 TTL。不要将私有临时 URL 当作永久资源地址保存。
 
@@ -462,7 +462,7 @@ func wechatWebhook(
 
 ## 6. 错误与重试
 
-所有业务方法返回 `*Response[T]`，其中 `Data` 为类型化结果，`RequestID` 用于排查。链路 ID 可用 `infra.WithRequestID(ctx, requestID)` 传入。
+所有业务方法返回 `*Response[T]`，其中 `Data` 为类型化结果，`RequestID` 用于排查。链路 ID 可用 `infra.WithRequestID(ctx, requestID)` 传入；仅接受 1-128 个可打印 ASCII 字符（不含空格），非法值在发送前返回明确错误。
 
 ```go
 ctx = infra.WithRequestID(ctx, requestID)
@@ -550,7 +550,7 @@ SDK 不自动重试或重放业务请求。Client Token 被 `401 UNAUTHORIZED` /
 
 ## 8. 正式版本安装与升级
 
-当前接入版本为 **`v0.1.0`**。SDK 采用独立的 SemVer 版本，不随根应用 `VERSION` 一起变更。仓库标签是 `v0.1.0`，产品侧安装使用 `@v0.1.0`。变更内容见 [SDK 变更记录](../CHANGELOG.md)。
+当前接入版本为 **`v0.2.0`**。SDK 采用独立的 SemVer 版本，不随根应用 `VERSION` 一起变更。仓库标签是 `v0.2.0`，产品侧安装使用 `@v0.2.0`。变更内容见 [SDK 变更记录](../CHANGELOG.md)。
 
 ### 8.1 公开模块访问
 
@@ -565,7 +565,7 @@ SDK 通过公开 Git 仓库的版本标签分发，由 Go 模块代理缓存，�
 在产品项目中执行：
 
 ```bash
-go get github.com/ivanhxy/youwei-infra-sdk@v0.1.0
+go get github.com/ivanhxy/youwei-infra-sdk@v0.2.0
 go mod tidy
 go list -m github.com/ivanhxy/youwei-infra-sdk
 go test ./...
