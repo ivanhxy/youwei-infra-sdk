@@ -322,7 +322,7 @@ if status.Data.Status == "completed" && status.Data.Image != nil {
 
 `pending` 表示等待完成，`expired` / `failed` 时停止并处理失败。`ReconcileDirectUploadSession` 仅用于回调丢失后的兜底，不是日常完成步骤；刚创建就重查可能得到 `RECONCILE_NOT_READY`。终端严格使用 `Upload` 返回的 URL、Method 和 Headers：`binary_put` 直接发送文件二进制；`multipart_form` 将全部 FormFields 加入表单，再用 FileFieldName 指定的字段追加文件，浏览器自行生成 multipart Content-Type。SDK 不代传云端文件，也不向云存储发送中台 Bearer。终端只获得临时指令，不获得 Client Token 或 Secret。
 
-## 4. 业务短信与公众号
+## 4. 业务短信、公众号与文件存储
 
 ### 4.1 业务验证码
 
@@ -416,6 +416,46 @@ if err != nil {
 ```
 
 SDK 不维护第二份微信 Token 缓存，也不自动刷新并重发微信业务请求；恢复冷却通过 `APIError.RetryAfter` 返回。
+
+### 4.5 文件存储（STS 客户端直传）
+
+文件服务（中台 2.0.0 新增）中文件内容不经过中台：SDK 只封装控制面接口，负责领取 STS 临时凭证、续签、状态查询、下载地址与删除；实际上传与续传由终端使用阿里云官方 OSS SDK 完成。接入前需管理员为应用开通 `file.upload` / `file.read` / `file.download` / `file.delete` 能力。
+
+```go
+auth, err := client.Files.AuthorizeUpload(ctx, infra.FileUploadAuthorizationRequest{
+    SceneCode: "archive", OriginalFilename: "archive.zip",
+    FileSize: 536870912, ContentType: "application/zip",
+    OperatorID: "user-1", BizRefType: "order", BizRefID: "1001",
+    IdempotencyKey: "order-1001-attachment-1",
+})
+if err != nil {
+    return err
+}
+// 用 auth.Data 的 region/endpoint/bucket/object_key/credentials/callback 配置
+// 官方 OSS SDK 分片上传；凭证与签名 URL 不持久化、不写日志。
+// 续传时：
+renewed, err := client.Files.RenewUploadCredentials(ctx, auth.Data.FileID)
+// 回调丢失或收到 CallbackFailed 时，先核验而不是重传整个文件。
+// status.Data.ReconcileResult 说明本次 HEAD 结论（仅 Reconcile 返回）：
+//   OBJECT_CONFIRMED  核验通过（状态已置 ACTIVE，或此前已是 ACTIVE 的幂等重放）
+//   OBJECT_NOT_FOUND  云端对象尚不存在（状态保持 UPLOADING，可稍后重试或等回调）
+//   MISMATCH_FAILED   大小/类型/版本不符合授权（状态置 FAILED，见 ErrorMessage）
+status, err := client.Files.Reconcile(ctx, auth.Data.FileID)
+// 查询与业务绑定（业务库只保存 file_id）：
+file, err := client.Files.Get(ctx, auth.Data.FileID)
+// 下载：每次签发短期 URL（默认约 5 分钟），不是永久地址：
+access, err := client.Files.CreateAccessURL(ctx, auth.Data.FileID)
+// 删除（阻止新下载与续签，安排延迟清理，重复删除幂等）：
+_, err = client.Files.Delete(ctx, auth.Data.FileID)
+```
+
+关键约束：
+
+- **只有中台返回 `ACTIVE`（`infra.FileStatusActive`）才可作为业务附件**；OSS 上传成功只是体验信号。状态还有 `UPLOADING` / `FAILED` / `EXPIRED` / `DELETING` / `DELETED`。
+- 幂等键属于 Client：重放必须携带一致的文件元数据；已删除或终态文件不能用旧幂等键创建新对象。
+- 回调异常时先 `Reconcile`（中台 Head 核验），不要立即重传整文件；`ReconcileResult` 枚举给出本次核验结论，未变 `ACTIVE` 前不要把文件当业务附件。
+- 单文件业务上限默认 1GiB，由申请预检与上传后核验共同保证；`MaxFileSizeBytes` 是场景业务上限而非 STS 限制。
+- 完整上传流程（含 Web `ali-oss` 集成与断点续传）见中台 `docs/api/05-file-storage.md`。
 
 ## 5. 回调验签
 
@@ -513,6 +553,7 @@ SDK 不自动重试或重放业务请求。Client Token 被 `401 UNAUTHORIZED` /
 - 图片上传、通知短信：复用同一次业务的幂等键；文件流重试前重新打开或复位。SDK 不替调用方重新读取文件。
 - 用户凭证刷新、扫码换证、验证码核验：可能消费一次性凭证，超时不等于未执行；不要通用重试。
 - 发送验证码、微信发消息：不能假设接口具备幂等能力，先明确业务结果再决定后续动作。
+- 文件上传授权与凭证续签：一次性 STS 凭证语义，超时不等于未签发；重复请求按幂等键规则处理，删除后的续签会被拒绝。
 
 ## 7. 方法覆盖表
 
@@ -545,6 +586,12 @@ SDK 不自动重试或重放业务请求。Client Token 被 `401 UNAUTHORIZED` /
 | 公众号 | `Wechat.GetMenu` | `GET /api/v1/wechat/mp/channels/{channel_key}/menu` |
 | 公众号 | `Wechat.GetAccessToken` | `GET /api/v1/wechat/mp/channels/{channel_key}/access-token` |
 | 公众号 | `Wechat.RecoverAccessToken` | `POST /api/v1/wechat/mp/channels/{channel_key}/access-token/refresh` |
+| 文件 | `Files.AuthorizeUpload` | `POST /api/v1/files/upload-authorizations` |
+| 文件 | `Files.RenewUploadCredentials` | `POST /api/v1/files/{file_id}/upload-credentials` |
+| 文件 | `Files.Reconcile` | `POST /api/v1/files/{file_id}/reconcile` |
+| 文件 | `Files.Get` / `Files.Delete` | `GET` / `DELETE /api/v1/files/{file_id}` |
+| 文件 | `Files.List` | `GET /api/v1/files` |
+| 文件 | `Files.CreateAccessURL` | `POST /api/v1/files/{file_id}/access-urls` |
 
 第三方推送到中台的云存储、短信、微信 Portal 回调入口属于服务端入站协议，不作为产品线 SDK 调用方法。后台管理 API 不在 SDK 范围内。
 

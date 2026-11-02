@@ -5,7 +5,7 @@
 完整说明见 [Go SDK 使用文档](docs/usage.md)，从领取凭据、安装到业务调用和问题排查按顺序接入：
 
 - [首次接入与完整运行程序](docs/usage.md#1-从零接入)
-- [身份登录](docs/usage.md#2-身份登录)、[图片](docs/usage.md#3-图片)、[短信与公众号](docs/usage.md#4-业务短信与公众号)
+- [身份登录](docs/usage.md#2-身份登录)、[图片](docs/usage.md#3-图片)、[短信与公众号](docs/usage.md#4-业务短信、公众号与文件存储)、[文件存储](docs/usage.md#45-文件存储sts-客户端直传)
 - [回调验签](docs/usage.md#5-回调验签)、[错误与重试](docs/usage.md#6-错误与重试)
 - [正式版本安装与升级](docs/usage.md#8-正式版本安装与升级)
 

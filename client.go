@@ -28,6 +28,7 @@ type Client struct {
 	Images   *ImageService
 	SMS      *SMSService
 	Wechat   *WechatService
+	Files    *FilesService
 
 	baseURL      string
 	clientID     string
@@ -79,6 +80,7 @@ func NewClient(cfg Config) (*Client, error) {
 	c.Images = &ImageService{c}
 	c.SMS = &SMSService{c}
 	c.Wechat = &WechatService{c}
+	c.Files = &FilesService{c}
 	return c, nil
 }
 
