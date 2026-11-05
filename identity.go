@@ -18,6 +18,12 @@ type PasswordLoginRequest struct {
 	Password string `json:"password"`
 }
 
+type PasswordResetRequest struct {
+	Mobile      string `json:"mobile"`
+	Code        string `json:"code"`
+	NewPassword string `json:"new_password"`
+}
+
 type SMSLoginRequest struct {
 	Mobile string `json:"mobile"`
 	Code   string `json:"code"`
@@ -55,6 +61,13 @@ func (s *IdentityService) RegisterPassword(ctx context.Context, req PasswordRegi
 
 func (s *IdentityService) LoginPassword(ctx context.Context, req PasswordLoginRequest) (*Response[UserTokens], error) {
 	return call[UserTokens](ctx, s.client, http.MethodPost, "/api/v1/identity/password/login", nil, req)
+}
+
+// ResetPassword verifies an SMS code and replaces the password of an existing
+// user. It returns the same UserTokens bundle as LoginPassword; the old
+// password stops working and previously issued refresh tokens are revoked.
+func (s *IdentityService) ResetPassword(ctx context.Context, req PasswordResetRequest) (*Response[UserTokens], error) {
+	return call[UserTokens](ctx, s.client, http.MethodPost, "/api/v1/identity/password/reset", nil, req)
 }
 
 // SendSMSCode sends an identity login/registration code, not a business SMS code.

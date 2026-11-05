@@ -137,6 +137,38 @@ func TestUserTokensStaySeparateAndUnauthorizedWritesAreNotReplayed(t *testing.T)
 	}
 }
 
+func TestIdentityResetPasswordContract(t *testing.T) {
+	c, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/identity/password/reset" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		// The center decodes strictly and rejects unknown fields, so the
+		// new_password tag must match the wire contract exactly.
+		if body["mobile"] != "13800138000" || body["code"] != "123456" || body["new_password"] != "NewPass456!" {
+			t.Errorf("unexpected request body: %v", body)
+		}
+		if len(body) != 3 {
+			t.Errorf("unexpected request body fields: %v", body)
+		}
+		_, _ = io.WriteString(w, `{"data":{"user_id":"user-1","access_token":"user-token","refresh_token":"user-refresh","expires_in":60,"is_new_user":false},"request_id":"reset-1"}`)
+	})
+	resp, err := c.Identity.ResetPassword(context.Background(), PasswordResetRequest{
+		Mobile: "13800138000", Code: "123456", NewPassword: "NewPass456!",
+	})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if resp.RequestID != "reset-1" || resp.Data.AccessToken != "user-token" || resp.Data.RefreshToken != "user-refresh" || resp.Data.UserID != "user-1" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
 func TestHTTPAndProtocolErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, code string

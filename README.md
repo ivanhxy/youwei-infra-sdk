@@ -1,6 +1,6 @@
 # Youwei Infra Center Go SDK
 
-面向产品线后端的 Go SDK，接入版本 **v0.2.0**。Go 1.26+，仅使用标准库；无需引入中台后端、数据库驱动或云厂商 SDK。
+面向产品线后端的 Go SDK，接入版本 **v0.4.0**。Go 1.26+，仅使用标准库；无需引入中台后端、数据库驱动或云厂商 SDK。
 
 完整说明见 [Go SDK 使用文档](docs/usage.md)，从领取凭据、安装到业务调用和问题排查按顺序接入：
 
@@ -12,10 +12,10 @@
 在产品项目中安装：
 
 ```bash
-go get github.com/ivanhxy/youwei-infra-sdk@v0.2.0
+go get github.com/ivanhxy/youwei-infra-sdk@v0.4.0
 ```
 
-SDK 公开下载，无需私有仓库权限；中台凭据只在运行时注入产品后端。版本遵循 SemVer，使用独立标签 `v0.2.0`，详情见 [变更记录](CHANGELOG.md)。
+SDK 公开下载，无需私有仓库权限；中台凭据只在运行时注入产品后端。版本遵循 SemVer，使用独立标签 `v0.4.0`，详情见 [变更记录](CHANGELOG.md)。
 
 下面是已有 `ctx` 的业务函数内的调用片段；需要导入 `os`，并使用查询结果：
 

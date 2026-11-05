@@ -38,7 +38,7 @@ Module 路径是 `github.com/ivanhxy/youwei-infra-sdk`，导入别名使用 `inf
 在产品项目根目录安装指定版本：
 
 ```bash
-go get github.com/ivanhxy/youwei-infra-sdk@v0.2.0
+go get github.com/ivanhxy/youwei-infra-sdk@v0.4.0
 ```
 
 已有 Go 项目继续使用自己的 `go.mod`；仅新建项目时先运行 `go mod init <你的产品模块路径>`。SDK 公开下载，无需中台仓库权限或私有 Git 凭据。
@@ -179,6 +179,20 @@ if err != nil {
 ```
 
 密码策略由中台当前应用配置决定；注册不可跳过短信核身。`ALREADY_EXISTS` 表示已注册，`INVALID_CREDENTIALS` 表示账号或密码错误，不能通过重复发送或自动重放登录来解决。
+
+用户忘记密码时，用短信验证码重置（同样先调用 `Identity.SendSMSCode` 取得验证码）：
+
+```go
+reset, err := client.Identity.ResetPassword(ctx, infra.PasswordResetRequest{
+    Mobile: mobileFromUser, Code: codeFromUser, NewPassword: newPasswordFromUser,
+})
+if err != nil {
+    return err
+}
+// reset.Data 与登录返回的 UserTokens 结构一致，重置后可引导用户直接登录。
+```
+
+重置成功后旧密码立即失效，该用户此前签发的所有 Refresh Token 一并吊销，因此本地会话需要按 §2.3 的规则重新处理。常见错误码：`INVALID_INPUT`（密码强度不足或手机号格式错误）、`sms.verification.invalid_code` / `sms.verification.expired` / `sms.verification.locked`（验证码错误、过期或被锁定）、`NOT_FOUND`（该手机号在当前 Client 下没有绑定用户）、`USER_FROZEN`（用户被冻结）、`FORBIDDEN`（中台未开通密码重置所需的密码登录与短信登录渠道）。验证码一次性消费，重置失败时需要重新获取验证码。
 
 ### 2.3 用户凭证的保存与刷新
 
@@ -563,6 +577,7 @@ SDK 不自动重试或重放业务请求。Client Token 被 `401 UNAUTHORIZED` /
 | 身份 | `Identity.LoginSMS` | `POST /api/v1/identity/sms/login` |
 | 身份 | `Identity.RegisterPassword` | `POST /api/v1/identity/password/register` |
 | 身份 | `Identity.LoginPassword` | `POST /api/v1/identity/password/login` |
+| 身份 | `Identity.ResetPassword` | `POST /api/v1/identity/password/reset` |
 | 身份 | `Identity.RefreshToken` | `POST /api/v1/identity/token/refresh` |
 | 身份 | `Identity.CreateWechatLoginQR` | `POST /api/v1/identity/wechat/login/qrcode` |
 | 身份 | `Identity.GetWechatLoginStatus` | `GET /api/v1/identity/wechat/login/qrcode/{login_id}` |
@@ -597,7 +612,7 @@ SDK 不自动重试或重放业务请求。Client Token 被 `401 UNAUTHORIZED` /
 
 ## 8. 正式版本安装与升级
 
-当前接入版本为 **`v0.2.0`**。SDK 采用独立的 SemVer 版本，不随根应用 `VERSION` 一起变更。仓库标签是 `v0.2.0`，产品侧安装使用 `@v0.2.0`。变更内容见 [SDK 变更记录](../CHANGELOG.md)。
+当前接入版本为 **`v0.4.0`**。SDK 采用独立的 SemVer 版本，不随根应用 `VERSION` 一起变更。仓库标签是 `v0.4.0`，产品侧安装使用 `@v0.4.0`。变更内容见 [SDK 变更记录](../CHANGELOG.md)。
 
 ### 8.1 公开模块访问
 
@@ -612,7 +627,7 @@ SDK 通过公开 Git 仓库的版本标签分发，由 Go 模块代理缓存，�
 在产品项目中执行：
 
 ```bash
-go get github.com/ivanhxy/youwei-infra-sdk@v0.2.0
+go get github.com/ivanhxy/youwei-infra-sdk@v0.4.0
 go mod tidy
 go list -m github.com/ivanhxy/youwei-infra-sdk
 go test ./...

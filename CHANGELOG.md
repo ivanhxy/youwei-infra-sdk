@@ -4,6 +4,18 @@ SDK 与中台应用独立版本管理；Git 标签是版本的唯一权威来源
 
 修复提升 PATCH，兼容功能提升 MINOR。`v0.x` 的破坏性变更提升 MINOR 并列出迁移步骤；`v1` 起破坏性变更提升 MAJOR，`v2` 起 module/import 路径增加 `/v2`。各产品线固定具体版本，升级与回退遵循自身验收流程。
 
+## v0.4.0 - 2026-11-05
+
+新增终端用户密码重置接口，对应中台 2.0.0 的 `POST /api/v1/identity/password/reset` 能力。接入前需管理员为应用开通 `identity.login` 能力（与密码注册、密码登录共用同一 scope）。
+
+- 新增 `client.Identity.ResetPassword`：用手机号 + 短信验证码核身后设置新密码，返回与密码登录相同的 `UserTokens` 包。
+- 新增类型 `PasswordResetRequest`（字段 `mobile` / `code` / `new_password`）。
+- 行为约定：重置成功后旧密码立即失效，该用户此前签发的所有 Refresh Token 一并吊销，调用方需按文档 §2.3 重新处理本地会话；短信验证码一次性消费。
+- 常见错误码：`INVALID_INPUT`（密码强度不足或手机号格式错误）、`sms.verification.invalid_code` / `sms.verification.expired` / `sms.verification.locked`（验证码错误、过期或被锁定）、`NOT_FOUND`（该手机号在当前 Client 下没有绑定用户）、`USER_FROZEN`（用户被冻结）、`FORBIDDEN`（中台未开通密码登录与短信登录渠道）。
+- 文档：`docs/usage.md` §2.2 补充重置密码用例与行为说明，§7 方法覆盖表补充 1 个接口。
+
+新增方法均为纯增量，不影响既有方法签名；从 v0.3.0 升级只需更新版本号。
+
 ## v0.3.0 - 2026-11-02
 
 新增文件存储（STS 客户端直传）控制面接口，对应中台 2.0.0 的 `/api/v1/files` 能力，共 7 个接口。接入前需管理员为应用开通 `file.upload` / `file.read` / `file.download` / `file.delete` 能力。
